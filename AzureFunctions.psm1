@@ -103,6 +103,41 @@ function Create-ServicePlan{
     }
 }
 
+function Create-WebApp{
+    Param (
+        [Parameter(Mandatory=$True)][string]$resourceGroupName,
+		[Parameter(Mandatory=$True)][string]$location,
+		[Parameter(Mandatory=$True)][string]$webappName,
+        [Parameter(Mandatory=$True)][string]$templatePath,
+		[Parameter(Mandatory=$True)][string]$identityResourceId,
+        [Parameter(Mandatory=$True)][string]$appServicePlanName
+    )
+    $azureWebApp = Get-AzResource -Name $webappName -ErrorAction SilentlyContinue
+    if ($azureWebApp -and $azureWebApp.Name -eq $webappName){
+        Write-Warning "WebApp $webappName already exists!"
+    }
+    else{
+        Write-Host "Creating webapp $webappName";
+    	$templateSrcFileName = "WebApp.json"
+	    $templateSrcParameterFileName = "WebApp.parameters.json"
+		$templateFileName = "NewWebApp.json"
+	    $templateParameterFileName = "NewWebApp.parameters.json"
+		Copy-Item -Path "$templatePath\$templateSrcFileName" -Destination "$templatePath\$templateFileName" -Force
+        Copy-Item -Path "$templatePath\$templateSrcParameterFileName" -Destination "$templatePath\$templateParameterFileName" -Force
+		
+	    Write-Host "Setting $webappName parameters";
+	    $paramatersObject = Get-Content $templateParameterFileName | Out-String | ConvertFrom-Json
+	    # Set parameters values from created resources	
+	    $paramatersObject.parameters.webapp_name.value = $webappName
+	    $paramatersObject.parameters.serviceplan_location.value = $location
+	    $paramatersObject.parameters.serviceplan_name.value = $appServicePlanName
+		$paramatersObject.parameters.serviceplan_resourceGroup.value = $resourceGroupName
+        $paramatersObject.parameters.identity_resourceId.value = $identityResourceId
+	    $paramatersObject | ConvertTo-Json -depth 10 | Out-File $templateParameterFileName
+        New-AzResourceGroupDeployment -ResourceGroupName $resourceGroupName -Name $webappName -TemplateFile $templateFileName -TemplateParameterFile $templateParameterFileName
+    }
+}
+
 function Create-StorageAccount{
     param (
 	    [Parameter(Mandatory=$True)][string]$resourceGroupName,
