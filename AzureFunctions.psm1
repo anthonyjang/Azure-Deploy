@@ -15,7 +15,7 @@ if (!(Get-InstalledModule -Name Az)){
 
 if (!(Get-Module -Name Az)){
 	Write-Host "Importing Az module"
-    Import-Module -Name Az
+    Import-Module -Name Az -Force
 }
 
 function Create-ResourceGroup{
@@ -90,7 +90,7 @@ function Create-ServicePlan{
 		[Parameter(Mandatory=$True)][string]$appServicePlanName,
         [string]$tier = "Basic",
 		[int]$numWorkers = 3,
-		[string]$workerSize = "Medium"
+		[string]$workerSize = "Small"
     )
 
     $appServicePlan = Get-AzAppServicePlan -ResourceGroupName $resourceGroupName -Name $appServicePlanName -ErrorAction SilentlyContinue
@@ -185,5 +185,52 @@ function Set-AzureConnection {
 
     [SecureString] $PasswordSecure = $accountPassword | ConvertTo-SecureString -AsPlainText -Force
     $AzureUserCredential = New-Object System.Management.Automation.PSCredential($accountUserName, $PasswordSecure)
-    Connect-AzAccount -Credential $AzureUserCredential -TenantId $tenantID | Out-Null    
+    Connect-AzAccount -Credential $AzureUserCredential -TenantId $tenantID | Out-Null        
+}
+
+function Deploy-Database{
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$True)][string]$resourceGroupName,
+        [Parameter(Mandatory=$True)][string]$dacpacFolder,
+        [Parameter(Mandatory=$True)][string]$sqlAdminUsername,
+        [Parameter(Mandatory=$True)][string]$sqlAdminPassword
+    )
+
+    function DeployDatabase ($SqlPackage,$Arguments){
+        for ($retry=1; $retry -le 2; $retry++){
+            try{
+                & $SqlPackage $Arguments
+            }
+            catch{
+                Write-Host ("Error thrown : {0}" -f $_.ToString())
+                if ($retry -eq 2){
+                    throw "Database deployment retry exhausted"
+                }
+            }
+            if ($LastExitCode -eq 0){
+                break;    
+            }
+        }    
+    }
+    $azureDBServerName = "$resourceGroupName-sqlserver.database.windows.net"
+    $azureDBName = "$resourceGroupName-sqldb"
+    #Deploy database dacpac to azure
+    $dacpac = "{0}\AzureSQL.dacpac" -f $dacpacFolder
+    if ($env:SQLPACKAGE){
+        $sqlpackage = "{0}sqlpackage.exe" -f $env:SQLPACKAGE
+    }
+    else{
+        $sqlpackage = "{0}sqlpackage.exe" -f (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Data-Tier Application Framework\InstallLocation' -Name '(Default)').psobject.Properties['(default)'].Value
+    }
+    $UpdateArguments = @("/Action:Publish", "/sf:$dacpac", "/tsn:tcp:$azureDBServerName,1433", "/tdn:$azureDBName", "/tu:$sqlAdminUsername", "/tp:$sqlAdminPassword", "/p:BlockOnPossibleDataLoss=false")
+    Write-Host "UpdateDatabase : $UpdateArguments"
+            
+    Write-Host "OriginalServiceObjective is equal or greater than DeployServiceObjective"
+    DeployDatabase -SqlPackage $sqlpackage -Arguments $UpdateArguments
+
+    if ($LastExitCode -ne 0){
+        throw "database deployment failed"
+    }
+    Write-Host "Deploy database $azureDBName completed"
 }
